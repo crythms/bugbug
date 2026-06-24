@@ -70,16 +70,24 @@ firefox = [
     { name = "grizzly-framework" },
     { name = "prefpicker" },
 ]
+searchfox = [
+    { name = "searchfox" },
+]
+vcs = [
+    { name = "httpx" },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "bugsy", marker = "extra == 'bugzilla'" },
     { name = "claude-agent-sdk", marker = "extra == 'claude-sdk'", specifier = ">=0.1.30" },
     { name = "grizzly-framework", marker = "extra == 'firefox'" },
+    { name = "httpx", marker = "extra == 'vcs'" },
     { name = "prefpicker", marker = "extra == 'firefox'" },
     { name = "pydantic", specifier = ">=2.6.0" },
+    { name = "searchfox", marker = "extra == 'searchfox'", specifier = ">=0.16.0" },
 ]
-provides-extras = ["bugzilla", "firefox", "claude-sdk"]
+provides-extras = ["bugzilla", "firefox", "claude-sdk", "searchfox", "vcs"]
 
 [[package]]
 name = "aiofile"
@@ -2423,7 +2431,7 @@ name = "hackbot-agent-frontend-triage"
 version = "0.1.0"
 source = { editable = "agents/frontend-triage" }
 dependencies = [
-    { name = "agent-tools", extra = ["bugzilla"] },
+    { name = "agent-tools", extra = ["bugzilla", "searchfox", "vcs"] },
     { name = "bugsy" },
     { name = "claude-agent-sdk" },
     { name = "hackbot-runtime", extra = ["claude-sdk"] },
@@ -2434,7 +2442,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "agent-tools", extras = ["bugzilla"], editable = "libs/agent-tools" },
+    { name = "agent-tools", extras = ["bugzilla", "searchfox", "vcs"], editable = "libs/agent-tools" },
     { name = "bugsy" },
     { name = "claude-agent-sdk", specifier = ">=0.1.30" },
     { name = "hackbot-runtime", extras = ["claude-sdk"], editable = "libs/hackbot-runtime" },
