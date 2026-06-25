@@ -1,0 +1,8 @@
+[source]
+repo_url = "https://github.com/mozilla-firefox/firefox.git"
+checkout_path = "/workspace/firefox"
+
+# No [firefox] table: this v1 executor edits source and produces a candidate
+# patch for human review. It does NOT build Firefox or run tests, so the build
+# toolchain is not prepared. The runtime auto-collects its edits into
+# changes/changes.patch after the run.

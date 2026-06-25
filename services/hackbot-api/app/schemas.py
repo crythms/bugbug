@@ -76,6 +76,16 @@ class FrontendTriageInputs(BaseModel):
     effort: str | None = None
 
 
+class FrontendFixInputs(BaseModel):
+    bug_id: int
+    # The triage plan (frontend-triage's summary.json `findings`). JSON-encoded
+    # into the PLAN env var by model_to_env; the agent decodes it back.
+    plan: dict[str, Any] | None = None
+    model: str | None = None
+    max_turns: int | None = None
+    effort: str | None = None
+
+
 class AutowebcompatReproInputs(BaseModel):
     bug_data: str | None = None
     bug_id: int | None = None
