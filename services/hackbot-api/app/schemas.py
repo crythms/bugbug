@@ -117,6 +117,12 @@ class FrontendTriageInputs(BaseModel):
     model: str | None = None
     max_turns: int | None = None
     effort: str | None = None
+    # Who asked for this run. Set to "bug-poller" by hackbot-bug-poller so it
+    # can count its own in-flight runs against its concurrency cap without
+    # manual UI runs (which leave this unset) consuming a slot. Rides along in
+    # the `inputs` JSONB, so no extra column is needed. It reaches the agent
+    # container as a SOURCE env var, which the agent ignores (extra="ignore").
+    source: str | None = None
 
 
 class TestPlanGeneratorInputs(BaseModel):

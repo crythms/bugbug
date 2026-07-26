@@ -28,6 +28,7 @@ members = [
     "hackbot-agent-frontend-triage",
     "hackbot-agent-test-plan-generator",
     "hackbot-api",
+    "hackbot-bug-poller",
     "hackbot-pulse-listener",
     "hackbot-runtime",
     "phabricator-client",
@@ -2672,6 +2673,30 @@ requires-dist = [
     { name = "sentry-sdk", specifier = ">=2.51.0" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.25" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.27.0" },
+]
+provides-extras = ["dev"]
+
+[[package]]
+name = "hackbot-bug-poller"
+version = "0.1.0"
+source = { editable = "services/hackbot-bug-poller" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic-settings" },
+    { name = "sentry-sdk" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.26.0" },
+    { name = "pydantic-settings", specifier = ">=2.1.0" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
+    { name = "sentry-sdk", specifier = ">=2.51.0" },
 ]
 provides-extras = ["dev"]
 

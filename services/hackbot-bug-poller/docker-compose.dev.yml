@@ -1,0 +1,11 @@
+services:
+  hackbot-bug-poller:
+    build:
+      context: ../..
+      dockerfile: services/hackbot-bug-poller/Dockerfile
+    # Inject config into the container (relative to this compose file = repo root .env).
+    env_file: ../../.env
+    # Live-edit the source without rebuilding (cwd takes precedence on sys.path).
+    volumes:
+      - ./app:/app/app
+    command: python -m app
