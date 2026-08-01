@@ -383,6 +383,9 @@ dl.kv dd {
   align-items: center;
   gap: 8px;
   font-size: 13px;
+  /* Holds the row at the Edit button's height, so swapping the button for the
+     edit-mode label doesn't shift everything below it. */
+  min-height: 26px;
 }
 .action-preview {
   margin-top: 8px;
@@ -392,6 +395,30 @@ dl.kv dd {
   display: block;
   font-size: 12px;
   margin-bottom: 4px;
+}
+.action-edit-btn {
+  margin-left: auto;
+  padding: 4px 12px;
+  font-size: 12px;
+}
+/* Sits in the slot the Edit button vacated, rather than above the textarea. */
+.action-edit-label {
+  margin-left: auto;
+  margin-bottom: 0;
+  font-size: 12px;
+}
+.action-edit-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.action-edited {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding-left: 4px;
+  font-size: 12px;
 }
 
 .artifact-list {

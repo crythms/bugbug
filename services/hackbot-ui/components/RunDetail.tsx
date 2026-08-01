@@ -4,7 +4,12 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { updateRunStatus } from "@/lib/store";
-import { isTerminal, type RunAction, type RunDoc } from "@/lib/types";
+import {
+  isEditable,
+  isTerminal,
+  type RunAction,
+  type RunDoc,
+} from "@/lib/types";
 import { FindingsView } from "./FindingsView";
 import { Markdown } from "./Markdown";
 import { StatusBadge } from "./StatusBadge";
@@ -52,6 +57,10 @@ export function RunDetail({ runId }: { runId: string }) {
   const [actions, setActions] = useState<RunAction[] | null>(null);
   const [applying, setApplying] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
+  // Only one action is edited at a time.
+  const [editingIdx, setEditingIdx] = useState<number | null>(null);
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchRun = useCallback(async () => {
@@ -107,6 +116,45 @@ export function RunDetail({ runId }: { runId: string }) {
   useEffect(() => {
     if (run && isTerminal(run.status)) fetchActions();
   }, [run, fetchActions]);
+
+  const startEdit = useCallback((a: RunAction) => {
+    setEditingIdx(a.idx);
+    setDraft(commentPreview(a) ?? "");
+    setApplyError(null);
+  }, []);
+
+  const cancelEdit = useCallback(() => {
+    setEditingIdx(null);
+    setDraft("");
+  }, []);
+
+  const saveEdit = useCallback(
+    async (idx: number) => {
+      setSaving(true);
+      setApplyError(null);
+      try {
+        const res = await fetch(`/api/runs/${runId}/actions/${idx}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: draft }),
+        });
+        const body = await res.json();
+        if (!res.ok)
+          throw new Error(body?.error ?? `Request failed (${res.status})`);
+        const updated = body as RunAction;
+        setActions(
+          (prev) => prev?.map((a) => (a.idx === idx ? updated : a)) ?? [updated]
+        );
+        setEditingIdx(null);
+        setDraft("");
+      } catch (err) {
+        setApplyError((err as Error).message);
+      } finally {
+        setSaving(false);
+      }
+    },
+    [runId, draft]
+  );
 
   const applyActions = useCallback(async () => {
     setApplying(true);
@@ -211,25 +259,89 @@ export function RunDetail({ runId }: { runId: string }) {
           <ul className="action-list">
             {actions.map((a) => {
               const preview = commentPreview(a);
+              const editing = editingIdx === a.idx;
               return (
                 <li key={a.idx}>
                   <div className="action-row">
                     <span className={`badge ${a.status}`}>{a.status}</span>
                     <code>{a.type}</code>
                     {a.error && <span className="muted">{a.error}</span>}
+                    {isEditable(a) && !editing && (
+                      <button
+                        type="button"
+                        className="action-edit-btn"
+                        onClick={() => startEdit(a)}
+                        disabled={editingIdx !== null || applying}
+                      >
+                        Edit
+                      </button>
+                    )}
+                    {/* Takes the Edit button's slot so the row doesn't reflow. */}
+                    {editing && (
+                      <label
+                        htmlFor={`action-text-${a.idx}`}
+                        className="action-edit-label"
+                      >
+                        Edit Markdown
+                      </label>
+                    )}
                   </div>
-                  {preview && (
-                    <div className="action-preview">
-                      <span className="muted">Comment preview</span>
-                      <Markdown text={preview} />
+                  {a.edited_by && !editing && (
+                    <div className="action-edited muted">
+                      edited by {a.edited_by}
+                      {a.edited_at &&
+                        ` · ${new Date(a.edited_at).toLocaleString()}`}
                     </div>
+                  )}
+                  {editing ? (
+                    <div className="action-preview">
+                      <textarea
+                        id={`action-text-${a.idx}`}
+                        rows={16}
+                        value={draft}
+                        onChange={(e) => setDraft(e.target.value)}
+                      />
+                      <div className="action-edit-actions">
+                        <button
+                          type="button"
+                          onClick={() => saveEdit(a.idx)}
+                          disabled={saving || !draft.trim()}
+                        >
+                          {saving ? "Saving…" : "Save"}
+                        </button>
+                        <button
+                          type="button"
+                          className="secondary"
+                          onClick={cancelEdit}
+                          disabled={saving}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    preview && (
+                      <div className="action-preview">
+                        <Markdown text={preview} />
+                      </div>
+                    )
                   )}
                 </li>
               );
             })}
           </ul>
           {pendingActions + failedActions > 0 && (
-            <button type="button" onClick={applyActions} disabled={applying}>
+            <button
+              type="button"
+              onClick={applyActions}
+              // Applying mid-edit would post the saved text, not the draft.
+              disabled={applying || editingIdx !== null}
+              title={
+                editingIdx !== null
+                  ? "Save or cancel your edit first"
+                  : undefined
+              }
+            >
               {applying ? "Applying…" : applyLabel}
             </button>
           )}

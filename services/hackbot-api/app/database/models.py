@@ -69,3 +69,9 @@ class RunAction(Base):
     applied_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Who last edited `params`, and when. Last edit only; the agent's original
+    # params stay in `runs.summary`, which `ensure_action_rows` never re-reads.
+    edited_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    edited_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )

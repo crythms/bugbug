@@ -40,6 +40,17 @@ class RunActionDoc(BaseModel):
     result: dict[str, Any] | None = None
     error: str | None = None
     applied_at: datetime | None = None
+    edited_by: str | None = None
+    edited_at: datetime | None = None
+
+
+class RunActionEdit(BaseModel):
+    """A human's replacement comment body for a pending action.
+
+    Text only: a whole-`params` edit could retarget the action at another bug.
+    """
+
+    text: str
 
 
 class AgentDescriptor(BaseModel):

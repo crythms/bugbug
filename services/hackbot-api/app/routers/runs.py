@@ -20,6 +20,7 @@ from app.jobs import ExecutionStatus
 from app.schemas import (
     AgentDescriptor,
     RunActionDoc,
+    RunActionEdit,
     RunDoc,
     RunRef,
     RunStatus,
@@ -211,6 +212,69 @@ async def list_run_actions(
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
     return await _list_actions(db, run_id)
+
+
+# Action types whose comment body a human may rewrite before applying.
+EDITABLE_ACTION_TYPES = frozenset({"bugzilla.add_comment"})
+EDITABLE_PARAM = "text"
+
+
+@router.patch("/runs/{run_id}/actions/{idx}", response_model=RunActionDoc)
+async def edit_run_action(
+    run_id: uuid.UUID,
+    idx: int,
+    payload: RunActionEdit,
+    on_behalf_of: Annotated[
+        UserEmail,
+        Header(
+            alias="X-On-Behalf-Of",
+            description="Email of the user making the edit.",
+        ),
+    ] = None,
+    db: AsyncSession = Depends(get_db),
+) -> RunActionDoc:
+    """Replace a pending action's comment body with a human's version.
+
+    Written to the `run_actions` row, which is what apply reads;
+    `ensure_action_rows` only inserts missing rows, so the edit survives it.
+    """
+    run = await db.get(Run, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    result = await db.execute(
+        select(RunAction).where(RunAction.run_id == run_id, RunAction.idx == idx)
+    )
+    action = result.scalar_one_or_none()
+    if action is None:
+        raise HTTPException(status_code=404, detail="Action not found")
+
+    # Only an untried action can be rewritten. `applied` is already on the bug;
+    # `failed` records a real attempt, so it's frozen too.
+    if action.status != "pending":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Only pending actions can be edited (this one is {action.status})",
+        )
+
+    if action.type not in EDITABLE_ACTION_TYPES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Action type '{action.type}' is not editable",
+        )
+
+    text = payload.text.strip()
+    if not text:
+        raise HTTPException(status_code=422, detail="Comment text cannot be empty")
+
+    # Reassign: `params` isn't mutation-tracked, so an in-place item write
+    # wouldn't be flushed.
+    action.params = {**action.params, EDITABLE_PARAM: text}
+    action.edited_by = on_behalf_of
+    action.edited_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    return RunActionDoc.model_validate(action)
 
 
 @router.post("/runs/{run_id}/actions/apply", response_model=list[RunActionDoc])

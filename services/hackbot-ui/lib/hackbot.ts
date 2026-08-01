@@ -113,6 +113,23 @@ export function applyRunActions(runId: string): Promise<RunAction[]> {
   );
 }
 
+// Replace a pending action's comment body; returns the updated action.
+export function updateRunActionText(
+  runId: string,
+  idx: number,
+  text: string,
+  editedBy?: string | null
+): Promise<RunAction> {
+  return request<RunAction>(
+    `/runs/${encodeURIComponent(runId)}/actions/${idx}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ text }),
+      headers: editedBy ? { "X-On-Behalf-Of": editedBy } : undefined,
+    }
+  );
+}
+
 // Ask hackbot-api for a short-lived signed download URL for one artifact.
 // `artifactName` may contain slashes; each segment is encoded individually so
 // the upstream `{artifact_path:path}` route still sees the directory structure.

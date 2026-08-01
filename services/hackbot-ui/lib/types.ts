@@ -49,6 +49,18 @@ export interface RunAction {
   result: Record<string, unknown> | null;
   error: string | null;
   applied_at: string | null;
+  // Set when a human rewrote params (last edit only).
+  edited_by: string | null;
+  edited_at: string | null;
+}
+
+// Mirrors EDITABLE_ACTION_TYPES in services/hackbot-api/app/routers/runs.py.
+const EDITABLE_ACTION_TYPES = new Set(["bugzilla.add_comment"]);
+
+// Only an untried action can be rewritten: `applied` is already on the bug, and
+// `failed` is a record of a real attempt.
+export function isEditable(action: RunAction): boolean {
+  return EDITABLE_ACTION_TYPES.has(action.type) && action.status === "pending";
 }
 
 export interface RunRef {
