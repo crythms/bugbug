@@ -571,6 +571,7 @@ async def run_frontend_triage(
     verbose: bool = False,
     log: Path | None = None,
     actions_recorder: ActionsRecorder | None = None,
+    product_component: tuple[str | None, str | None] | None = None,
 ) -> FrontendTriageResult:
     """Triage and plan a fix for a single Bugzilla frontend bug (read-only).
 
@@ -618,8 +619,12 @@ async def run_frontend_triage(
 
     # Whose guidance goes in the prompt. Falls back to every component when the bug's
     # component is unknown or the lookup failed, which is what the prompt carried before
-    # this was split up -- see `guidance_for`.
-    product, component = await fetch_product_component(bugzilla_mcp_server, bug)
+    # this was split up -- see `guidance_for`. A caller that already knows the pair
+    # passes it directly; `fetch_product_component` only supports URL-based servers.
+    if product_component is not None:
+        product, component = product_component
+    else:
+        product, component = await fetch_product_component(bugzilla_mcp_server, bug)
     components = guidance_for(product, component)
     loaded = {entry.key for entry in components}
     print(
