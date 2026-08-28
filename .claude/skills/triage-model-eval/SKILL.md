@@ -79,23 +79,36 @@ report the actual error output.
 
 ## 4. Present the results
 
-Read the `--output-json` file. It contains `aggregate` (scorer summaries),
-`examples` (one record per bug), and `weave` (whether a dashboard record
-exists). Report, in this order:
+Read the `--output-json` file: `aggregate` (scorer summaries), `examples` (one
+record per bug), `weave` (whether a dashboard record exists). Also read the
+judge's `*_explanation` fields — the write-up is mostly a digest of those, not
+of the numbers.
 
-1. **Per bug**: the judge's `head_to_head` verdict (candidate / original /
-   tie) with a one-sentence digest of `head_to_head_explanation`, the
-   candidate's `confidence` and whether `candidate_root_cause_plausible`,
-   quality scores (candidate vs `original_analysis_quality`), and
-   `cost_usd`/`num_turns`.
-2. **Aggregate**: `head_to_head_win_rate`/`tie_rate`,
-   `candidate_plausible_rate`, `overconfidence_rate` (the switch-gating
-   number: said high confidence, judge found it implausible),
-   `avg_target_files_jaccard`, cost totals.
-3. **Flags**: any `contamination_flags` (the model curled live Bugzilla),
-   any `skipped: data_contamination` examples, any inputs SKIPPED in the
-   pre-flight table.
-4. When `weave` is true, link the dashboard for drill-down:
+**Always use this shape, per bug:**
+
+1. **A one-line verdict headline** naming the bug, what it is in plain words,
+   and who won — e.g. "Bug 2067356 (Fenix: black awesomebar area with
+   wallpaper) — judge picked the original Opus 5 run".
+2. **A comparison table**: candidate vs baseline, one row per metric that
+   moved — analysis quality, comment quality, cost, turns, confidence. Numbers
+   only; explanation goes in the prose below, not in the cells.
+3. **Two or three short paragraphs on _why_**, grounded in the judge's
+   explanations: did the models reach the same root cause or different ones;
+   what specifically the winner got right; what the loser missed or
+   fabricated. Name files/symbols where the judge did — that is what makes the
+   verdict checkable.
+4. **What the mechanical metrics did or didn't catch** — e.g. agreement
+   metrics matching while the judge found the diagnosis wrong. This is where
+   `avg_target_files_jaccard`, severity/duplicate agreement, and
+   `overconfidence_rate` belong.
+5. **Flags and caveats**: `contamination_flags`, `skipped:
+data_contamination`, inputs SKIPPED in the pre-flight, and any way the
+   comparison is not apples-to-apples (e.g. a production baseline vs a replay
+   candidate).
+6. **A running scorecard** when more than one bug has been evaluated: wins per
+   model so far, and an explicit note on whether the sample supports a
+   conclusion (a couple of bugs does not).
+7. The `--output-json` path, and the Weave link when `weave` is true:
    https://wandb.ai/moz-bugbug/bugbug-frontend-triage-eval/weave/evaluations
 
 Verdicts come from an LLM judge — present them as the judge's assessment, not
