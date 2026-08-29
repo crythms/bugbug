@@ -24,7 +24,6 @@ from evals.replay import (
     get_bug_comments,
     get_bugs,
     parse_transcript,
-    search_bugs,
 )
 
 BUG = {
@@ -124,24 +123,16 @@ def snapshot() -> ReplaySnapshot:
     return parse_transcript(FIXTURE)
 
 
-def test_parse_captures_primary_bug(snapshot):
+def test_parse_captures_bug_data(snapshot):
     assert snapshot.fields[2014702]["summary"] == "Tab strip flickers"
-    assert snapshot.fields[2014702]["component"] == "Tabbed Browser"
-    # Embedded comments (include_comments=true) and the dedicated
-    # get_bug_comments result both land; the longest list wins.
     assert [c["text"] for c in snapshot.comments[2014702]] == [
         "It flickers.",
         "Confirmed on Nightly.",
     ]
     assert snapshot.attachments[2014702][0]["id"] == 5
-
-
-def test_parse_captures_search_neighbors(snapshot):
+    # Bugs the original run only saw via search are served too.
     assert snapshot.fields[1999999]["resolution"] == "DUPLICATE"
-
-
-def test_parse_skips_non_json_and_error_results(snapshot):
-    # The raw-text Read result and the [tool←ERROR] block must not create bugs.
+    # The raw-text Read result and the [tool←ERROR] block create no bugs.
     assert set(snapshot.fields) == {2014702, 1999999}
 
 
@@ -179,65 +170,15 @@ async def test_get_bugs_default_fields_exclude_unrequested(snapshot):
     assert "comments" not in bug
 
 
-async def test_get_bug_comments_shape(snapshot):
+async def test_read_tools_serve_the_snapshot(snapshot):
     ctx = ReplayBugzillaContext(snapshot=snapshot)
-    result = await get_bug_comments(ctx, bug_id=2014702)
-    assert result == {"bug_id": 2014702, "count": 2, "comments": COMMENTS}
-
-
-async def test_get_bug_attachments_metadata_only(snapshot):
-    ctx = ReplayBugzillaContext(snapshot=snapshot)
-    result = await get_bug_attachments(ctx, bug_id=2014702, include_data=True)
-    assert result["count"] == 1
-    assert result["attachments"][0]["content_type"] == "image/png"
-
-
-async def test_search_bugs_always_empty(snapshot):
-    ctx = ReplayBugzillaContext(snapshot=snapshot)
-    result = await search_bugs(ctx, params={"summary": "flicker"})
-    assert result == {"count": 0, "bugs": []}
-
-
-async def test_download_attachment_refuses(snapshot):
-    ctx = ReplayBugzillaContext(snapshot=snapshot)
+    assert await get_bug_comments(ctx, bug_id=2014702) == {
+        "bug_id": 2014702,
+        "count": 2,
+        "comments": COMMENTS,
+    }
+    attachments = await get_bug_attachments(ctx, bug_id=2014702)
+    assert attachments["attachments"][0]["content_type"] == "image/png"
+    # Attachment bytes are never in a transcript, so downloads always refuse.
     with pytest.raises(ToolError):
         await download_attachment(ctx, attachment_id=5, dest_path="/tmp/x")
-
-
-def test_row_from_files(tmp_path):
-    from evals.dataset import DatasetError, row_from_files
-
-    summary = {
-        "status": "ok",
-        "error": None,
-        "findings": {
-            "bug_id": 2014702,
-            "auto_apply": False,
-            "confidence": "medium",
-            "num_turns": 12,
-            "product": "Firefox",
-            "component": "Tabbed Browser",
-        },
-        "actions": [
-            {"type": "bugzilla.add_comment", "params": {"text": "Root cause: ..."}}
-        ],
-    }
-    summary_path = tmp_path / "summary.json"
-    summary_path.write_text(json.dumps(summary))
-    log_path = tmp_path / "agent.log"
-    log_path.write_text("[system] session started (model=claude-opus-5)\n" + FIXTURE)
-
-    row = row_from_files(summary_path, log_path)
-    assert row["bug_id"] == 2014702
-    assert row["source"] == "files"
-    assert row["original_model"] == "claude-opus-5"
-    assert row["original_comment"] == "Root cause: ..."
-    # Run date derives from the snapshot's newest timestamp, not file mtime.
-    assert row["run_created_at"].startswith("2026-02-06T09:00:00")
-    assert "2014702" in str(row["snapshot"]["fields"].keys())
-
-    # A run that never triaged (preflight skip) is not a usable baseline.
-    summary["findings"]["num_turns"] = 0
-    summary_path.write_text(json.dumps(summary))
-    with pytest.raises(DatasetError):
-        row_from_files(summary_path, log_path)

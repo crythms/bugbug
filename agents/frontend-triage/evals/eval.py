@@ -195,9 +195,8 @@ class FrontendTriageEvalModel(weave.Model):
     candidate_model: str
     effort: str | None = None
     judge_model: str = VERIFY_MODEL
-    # When set, invoke appends one JSON line per completed example here, so a
-    # caller (--output-json, the /triage-model-eval skill) can present per-bug
-    # results without scraping Weave.
+    # invoke appends one JSON line per example, so results are available
+    # without a Weave dashboard.
     results_path: str | None = None
 
     @cached_property

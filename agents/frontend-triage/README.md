@@ -257,72 +257,54 @@ notifies. The run page shows the failed action.
 
 ## Evaluation (model comparison)
 
-`evals/` is an offline harness for answering one question before switching the
-agent's model: is the candidate actually better _at triaging these bugs_ than
-the model that ran them? You name the baseline runs directly, two ways:
-
-- `--runs <url-or-uuid>[,...]` — a Launchpad run URL
-  (`https://hackbot.moz.tools/runs/<uuid>`) or bare run UUID. Fetched
-  read-only from hackbot-api, which needs `HACKBOT_API_URL` +
-  `HACKBOT_API_KEY` once (the run page itself is SSO-only and serves no data;
-  every `/runs*` API route requires the key). From the hackbot GCP project:
-  `gcloud run services describe hackbot-api --format 'value(status.url)'` and
-  `gcloud secrets versions access latest --secret external-api-key`.
-- `--baseline <summary.json> <agent.log>` (repeatable) — a run's two files
-  already on disk (downloaded from a run page, or a local compose run under
-  `~/hackbot/artifacts/<run>/`). No credentials; the bug id, original model,
-  and run date are read out of the files.
-
-The candidate model then re-triages each bug inside a replay of that run's
-environment:
-
-- **Bugzilla is never contacted.** The original run's `logs/agent.log` carries
-  every Bugzilla tool result untruncated, so the transcript is a snapshot of
-  the bug as of that run — pre-fix, pre-resolution, without the previously
-  posted triage comment. `evals/replay.py` parses it and serves the same five
-  Bugzilla tools from it. `search_bugs` returns zero hits (a trace can't answer
-  new queries), so the duplicate hunt isn't exercised — identically for every
-  candidate.
-- **The source tree is a git worktree** pinned to the last mainline commit
-  before the run, so a later fix isn't in the tree the candidate greps.
-- **The comment is recorded locally** (own `ActionsRecorder`, all hooks still
-  fire), never posted.
-- **An LLM judge grades head-to-head**: candidate vs. the original run's
-  output, against the snapshot and the code. The original is a comparison
-  point, not ground truth. Mechanical agreement metrics (confidence, target
-  files, severity, duplicate verdict) ride along, plus `overconfidence_rate`:
-  said `high` confidence, judge found the root cause implausible.
-
-Needs a Firefox git checkout (`FIREFOX_GIT_REPO`; a stale one is fine — the
-harness runs `git fetch origin` once when the replayed run postdates the tip)
-and `ANTHROPIC_API_KEY` (agent + judge). `WANDB_API_KEY` (Weave dashboards) is
-**optional**: without W&B auth the harness runs the same eval locally
-(`--no-weave`, also the automatic fallback) and everything lands in
-`--output-json` — you just get no dashboard record or compare UI. All of it
-can go in the same gitignored repo root `.env` used for local agent runs — the
-harness loads it automatically, so nothing needs exporting per invocation:
+`evals/` answers one question before a model switch: is the candidate better
+_at triaging these bugs_ than the model that already ran them? Name the
+baseline runs and the candidate re-triages each bug inside a replay of that
+run:
 
 ```sh
 uv run --package hackbot-agent-frontend-triage --extra eval \
-  python -m evals.eval --model claude-opus-5 \
+  python -m evals.eval --model claude-fable-5 \
   --runs https://hackbot.moz.tools/runs/<uuid> \
-  --output-json /tmp/claude/results.json
+  --output-json results.json
 ```
 
-Compare models by running the same inputs once per `--model` and opening the
-evaluations side by side in the Weave UI (or diffing the `--output-json`
-files): https://wandb.ai/moz-bugbug/bugbug-frontend-triage-eval/weave/evaluations
+Baselines come from `--runs` (a Launchpad run URL or UUID, fetched read-only
+from hackbot-api — needs `HACKBOT_API_URL` + `HACKBOT_API_KEY`) or
+`--baseline <summary.json> <agent.log>`, a run's two files already on disk,
+which needs no credentials. Both are repeatable.
 
-Flags: `--effort`, `--judge-model <id>` (hold it fixed across the runs being
-compared), `--trials N`, `--parallelism N` (default 4; each in-flight example
-holds a Firefox worktree, ~5-10 GB of working files), `--output-json <path>`
-(aggregate + per-bug results incl. judge explanations), `--no-weave`. A
-pre-flight table prints each resolved run before anything spends money; runs
-whose date precedes a model's training cutoff (`MODEL_CUTOFF_DATES` in
-`evals/verify.py`) are skipped as contaminated. Debug the replay data for one
-run with `python -m evals.replay --log <agent.log>` (or `--run <run-id>`), and
-input resolution with `python -m evals.dataset --runs <url>` /
-`--baseline <summary.json> <agent.log>`.
+The replay is offline and inert:
+
+- **Bugzilla is never contacted.** The original run's `agent.log` recorded
+  every Bugzilla tool result untruncated, so it is a snapshot of the bug as of
+  that run — pre-fix, pre-resolution, without the posted triage comment.
+  `search_bugs` returns nothing (a trace can't answer new queries), so the
+  duplicate hunt is not exercised, identically for every candidate.
+- **The source tree** is a worktree pinned before the run, so a later fix is
+  not in the tree the candidate greps.
+- **The comment is recorded locally**, hooks and all, never posted.
+- **An LLM judge grades candidate vs. original head-to-head** against the
+  snapshot and the code; the original is a comparison point, not ground truth.
+  Agreement metrics ride along, plus `overconfidence_rate` — claimed `high`
+  confidence, judge found the root cause implausible.
+
+Needs `FIREFOX_GIT_REPO` (a stale checkout is fine; the harness fetches when
+the run postdates the tip) and `ANTHROPIC_API_KEY`, both readable from the
+gitignored repo root `.env`. `WANDB_API_KEY` is optional — without it the eval
+runs the same scorers locally (`--no-weave`) and reports through
+`--output-json`, forgoing the
+[dashboard](https://wandb.ai/moz-bugbug/bugbug-frontend-triage-eval/weave/evaluations)
+and its compare view. Compare models by running the same inputs once per
+`--model`.
+
+Other flags: `--effort`, `--judge-model` (hold it fixed across compared runs),
+`--trials`, `--parallelism` (default 4; each in-flight example holds a Firefox
+worktree). A pre-flight table prints every resolved run before anything spends
+money, and runs predating a model's training cutoff (`MODEL_CUTOFF_DATES` in
+`evals/verify.py`) are skipped as contaminated. `python -m evals.replay --log
+<agent.log>` and `python -m evals.dataset --runs <url>` debug the replay data
+and input resolution on their own.
 
 ## Tuning
 

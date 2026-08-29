@@ -35,7 +35,6 @@ VERIFY_MODEL = "claude-opus-5"
 # run whose date precedes a model's cutoff may have its bug -- and possibly the
 # eventual fix -- in that model's training data.
 # Source: https://platform.claude.com/docs/en/about-claude/models/overview
-# Keep in sync with agents/build-repair/evals/verify.py.
 MODEL_CUTOFF_DATES = {
     "claude-fable-5": date(2026, 1, 1),
     "claude-opus-5": date(2026, 5, 1),

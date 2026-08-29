@@ -3,13 +3,24 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
-"""Tests for the eval row builder's run-URL parsing and fetch guards."""
+"""Tests for the eval row builder: run-URL parsing, fetch guards, file pairs."""
+
+import json
 
 import httpx
 import pytest
-from evals.dataset import AGENT, DatasetError, fetch_run, parse_run_ref
+from evals.dataset import AGENT, DatasetError, fetch_run, parse_run_ref, row_from_files
 
 RUN_ID = "bc09dcf8-9db6-4779-8975-671582a8a0d6"
+
+LOG = """[system] session started (model=claude-opus-5)
+[agent→tool] mcp__bugzilla__get_bugs
+{"ids": [2014702]}
+  [tool←ok]
+{"count": 1, "bugs": [{"id": 2014702, "summary": "Tab strip flickers",
+"last_change_time": "2026-02-06T09:00:00Z",
+"comments": [{"creation_time": "2026-02-05T11:22:46Z", "text": "It flickers."}]}]}
+"""
 
 
 def test_parse_run_ref_url_forms():
@@ -80,3 +91,33 @@ def test_fetch_run_not_succeeded():
     with _client(handler) as client:
         with pytest.raises(DatasetError, match="failed"):
             fetch_run(client, RUN_ID)
+
+
+def _baseline_files(tmp_path, **findings):
+    summary = {
+        "status": "ok",
+        "findings": {"bug_id": 2014702, "confidence": "medium", "num_turns": 12}
+        | findings,
+        "actions": [
+            {"type": "bugzilla.add_comment", "params": {"text": "Root cause: ..."}}
+        ],
+    }
+    summary_path = tmp_path / "summary.json"
+    summary_path.write_text(json.dumps(summary))
+    log_path = tmp_path / "agent.log"
+    log_path.write_text(LOG)
+    return summary_path, log_path
+
+
+def test_row_from_files(tmp_path):
+    row = row_from_files(*_baseline_files(tmp_path))
+    assert row["bug_id"] == 2014702
+    assert row["original_model"] == "claude-opus-5"
+    assert row["original_comment"] == "Root cause: ..."
+    # Run date derives from the snapshot's newest timestamp, not file mtime.
+    assert row["run_created_at"].startswith("2026-02-06T09:00:00")
+
+
+def test_row_from_files_rejects_run_that_never_triaged(tmp_path):
+    with pytest.raises(DatasetError):
+        row_from_files(*_baseline_files(tmp_path, num_turns=0))

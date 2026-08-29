@@ -5,34 +5,30 @@
 
 """Trace-based Bugzilla MCP server for frontend-triage evals.
 
-Replays a historical run's Bugzilla data to the agent under test. The source is
-the original run's ``logs/agent.log`` transcript: the ``Reporter`` writes every
-tool result to the log untruncated, so the transcript carries the full JSON of
-each Bugzilla fetch the original agent made -- an organically captured snapshot
-of the bug as of that run, pre-fix and pre-resolution by construction. No live
-Bugzilla access happens anywhere in the eval.
+Serves the agent under test from a historical run's ``logs/agent.log``, where
+the ``Reporter`` recorded every Bugzilla tool result untruncated -- a snapshot
+of the bug as of that run, pre-fix and pre-resolution by construction. Nothing
+here touches live Bugzilla.
 
-The five ``@tool`` handlers mirror ``agent_tools.bugzilla`` exactly -- same
-names, signatures, and docstrings -- so the agent under test sees the identical
-tool surface it has in production, backed by the snapshot instead of the
-broker. ``search_bugs`` is the one behavioral difference: a trace cannot answer
-queries the original run never made, so searches return zero hits (identically
-for every candidate model).
+The five ``@tool`` handlers mirror ``agent_tools.bugzilla`` exactly (same
+names, signatures, docstrings) so the agent sees its production tool surface.
+``search_bugs`` is the one behavioral difference: a trace cannot answer queries
+the original run never made, so it returns zero hits for every candidate.
 """
 
 from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Annotated, Any
 
 from agent_tools.registry import ToolError, tool, tools_in
 from pydantic import Field
 
-# Keep in sync with the default in agent_tools.bugzilla.get_bugs: the replay
-# must project the same fields production returns when the agent asks for the
-# default set.
+# Must match agent_tools.bugzilla.get_bugs, so an agent asking for the default
+# field set gets the same fields production would return.
 _DEFAULT_GET_BUGS_FIELDS = (
     "id,summary,status,resolution,product,component,priority,"
     "severity,keywords,whiteboard,assigned_to,creator,"
@@ -40,10 +36,9 @@ _DEFAULT_GET_BUGS_FIELDS = (
     "cf_crash_signature,url,version,op_sys,platform"
 )
 
-# A line the Reporter emits between content blocks. Everything from a
-# "  [tool←ok]" line up to the next marker is one tool result. Bugzilla tool
-# results are json.dumps output (content newlines escaped), so no payload line
-# can collide with these prefixes.
+# Where one Reporter block ends and the next begins. Tool results are
+# json.dumps output with newlines escaped, so no payload line collides with
+# these prefixes.
 _MARKER = re.compile(
     r"^(\[(agent|subagent)(\]|:thinking\]|→tool\])"
     r"|  \[tool←(ok|ERROR)\]$"
@@ -62,10 +57,8 @@ _RESULT_OK = "  [tool←ok]"
 class ReplaySnapshot:
     """Bugzilla data observed in one run's transcript, keyed by bug id.
 
-    ``fields`` merges every bug field payload seen (``get_bugs`` and
-    ``search_bugs`` results share the shape); ``comments``/``attachments`` keep
-    the longest list seen per bug, since a later fetch within the run can only
-    have grown.
+    Field payloads merge across fetches; comment and attachment lists keep the
+    longest seen, since a later fetch in the same run can only have grown.
     """
 
     fields: dict[int, dict] = field(default_factory=dict)
@@ -73,7 +66,7 @@ class ReplaySnapshot:
     attachments: dict[int, list[dict]] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
-        """JSON-serializable form (dataset rows; JSON keys must be strings)."""
+        """JSON-serializable form; JSON object keys must be strings."""
         return {
             "fields": {str(k): v for k, v in self.fields.items()},
             "comments": {str(k): v for k, v in self.comments.items()},
@@ -123,74 +116,61 @@ def _ingest(snapshot: ReplaySnapshot, payload: Any) -> None:
         snapshot.attachments[bug_id] = attachments
 
 
-def parse_transcript(log_text: str) -> ReplaySnapshot:
-    """Extract every Bugzilla tool result from a run's ``agent.log``.
-
-    Classification is shape-based rather than call/result pairing: tool calls
-    and results interleave across turns in the transcript, but a Bugzilla
-    payload identifies itself by its keys (``bugs``, or ``bug_id`` +
-    ``comments``/``attachments``). Non-JSON result blocks (file reads, grep
-    output) fail ``json.loads`` and are skipped.
-    """
-    snapshot = ReplaySnapshot()
+def _blocks(log_text: str, is_header: Callable[[str], object]) -> Iterator[str]:
+    """Body of each block whose header line matches, up to the next marker."""
     lines = log_text.splitlines()
     i = 0
     while i < len(lines):
-        if lines[i] != _RESULT_OK:
+        if not is_header(lines[i]):
             i += 1
             continue
         j = i + 1
-        block: list[str] = []
         while j < len(lines) and not _MARKER.match(lines[j]):
-            block.append(lines[j])
             j += 1
+        yield "\n".join(lines[i + 1 : j])
+        i = j
+
+
+def parse_transcript(log_text: str) -> ReplaySnapshot:
+    """Extract every Bugzilla tool result from a run's ``agent.log``.
+
+    Payloads are recognized by shape rather than by pairing results with their
+    calls, which interleave across turns. Non-JSON blocks (file reads, grep
+    output) are skipped.
+    """
+    snapshot = ReplaySnapshot()
+    for block in _blocks(log_text, lambda line: line == _RESULT_OK):
         try:
-            _ingest(snapshot, json.loads("\n".join(block)))
+            _ingest(snapshot, json.loads(block))
         except json.JSONDecodeError:
             pass
-        i = j
     return snapshot
 
 
 _SESSION_MODEL = re.compile(r"^\[system\] session started \(model=([^)]+)\)", re.M)
+_BASH_CALL = re.compile(r"^\[(agent|subagent)→tool\] Bash$")
 
 
 def parse_session_model(log_text: str) -> str | None:
-    """The model the logged run actually used.
-
-    ``summary.json`` findings don't record the model; the only trace of it is
-    the Reporter's session-init line. First match wins (the main session's).
-    """
+    """The model the logged run used, which ``summary.json`` does not record."""
     match = _SESSION_MODEL.search(log_text)
     return match.group(1) if match else None
 
 
 def find_bmo_bash_commands(log_text: str) -> list[str]:
-    """Bash commands in a transcript that touch bugzilla.mozilla.org.
+    """Bash commands that touch bugzilla.mozilla.org.
 
-    The eval's contamination check: the replay server is the only sanctioned
-    Bugzilla data source, but ``Bash`` stays enabled for production parity, so
-    a model could in principle curl the live site. Flagged, not forbidden.
+    ``Bash`` stays enabled for production parity, so live Bugzilla remains
+    reachable around the replay server. Flagged, not forbidden.
     """
-    commands: list[str] = []
-    lines = log_text.splitlines()
-    i = 0
-    while i < len(lines):
-        if not re.match(r"^\[(agent|subagent)→tool\] Bash$", lines[i]):
-            i += 1
-            continue
-        j = i + 1
-        block: list[str] = []
-        while j < len(lines) and not _MARKER.match(lines[j]):
-            block.append(lines[j])
-            j += 1
+    commands = []
+    for block in _blocks(log_text, _BASH_CALL.match):
         try:
-            command = json.loads("\n".join(block)).get("command", "")
+            command = json.loads(block).get("command", "")
         except (json.JSONDecodeError, AttributeError):
             command = ""
         if "bugzilla.mozilla.org" in command:
             commands.append(command)
-        i = j
     return commands
 
 
@@ -225,9 +205,7 @@ async def search_bugs(
     component, status, resolution, priority, severity, assigned_to, whiteboard,
     include_fields, limit.
     """
-    # A trace can't answer queries the original run never made; zero hits is
-    # the same degradation for every candidate model.
-    return {"count": 0, "bugs": []}
+    return {"count": 0, "bugs": []}  # see module docstring
 
 
 def _project(bug: dict, include_fields: str | None) -> dict:

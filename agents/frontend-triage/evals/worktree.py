@@ -18,8 +18,7 @@ from pathlib import Path
 
 logger = getLogger(__name__)
 
-# Under the system temp dir (honors $TMPDIR) rather than a hardcoded /tmp, so
-# it lands somewhere writable across environments.
+# Honors $TMPDIR; a hardcoded /tmp is not writable in every environment.
 WORKTREE_BASE_DIR = str(Path(tempfile.gettempdir()) / "frontend_triage_worktrees")
 
 

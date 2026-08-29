@@ -193,8 +193,6 @@ class LLMJudgeScorer(weave.Scorer):
             "head_to_head": j.get("head_to_head"),
             "head_to_head_explanation": j.get("head_to_head_explanation", ""),
             "agrees_with_original": j.get("agrees_with_original"),
-            # The switch-gating headline: said "high confidence" but the judge
-            # found the root cause implausible.
             "overconfident": (
                 findings.get("confidence") == "high"
                 and j.get("candidate_root_cause_plausible") is False
