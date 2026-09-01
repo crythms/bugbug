@@ -28,14 +28,15 @@ from claude_agent_sdk import (
     ClaudeAgentOptions,
     ClaudeSDKClient,
     McpServerConfig,
-    ResultMessage,
-    SystemMessage,
 )
-from claude_agent_sdk.types import TERMINAL_TASK_STATUSES
 from hackbot_runtime import ActionsRecorder, AgentError, HackbotAgentResult
 from hackbot_runtime.actions import ACTIONS_SERVER_NAME
 from hackbot_runtime.actions.claude_sdk import actions_server_for, actions_to_tool_names
-from hackbot_runtime.claude import Reporter
+from hackbot_runtime.claude import (
+    Reporter,
+    UnsettledResponseError,
+    receive_settled_response,
+)
 from hackbot_runtime.searchfox import (
     PLACEHOLDER as SEARCHFOX_PLACEHOLDER,
 )
@@ -162,30 +163,6 @@ SEARCHFOX_LINKS_PROMPT = (
     "a Searchfox result). A path that is not in the checkout is stripped back to "
     "plain text rather than linked, so guessing costs you the link."
 )
-
-
-# Task types whose completion wakes the parent for a follow-up turn, so the run
-# is not over while one is outstanding. Mirrors the SDK's own `DEFERRING_TASK_TYPES`,
-# inlined because that constant is private. Background *shells* are deliberately not
-# tracked: they may never reach a terminal status, and waiting on one would hang.
-_DEFERRING_TASK_TYPES = frozenset({"local_agent", "local_workflow"})
-
-
-def _track_task(msg: SystemMessage, inflight: set[str]) -> None:
-    """Maintain the set of delegated tasks still owed a report."""
-    task_id = msg.data.get("task_id")
-    if not task_id:
-        return
-    if msg.subtype == "task_started":
-        if msg.data.get("task_type") in _DEFERRING_TASK_TYPES:
-            inflight.add(task_id)
-    elif msg.subtype == "task_notification":
-        inflight.discard(task_id)
-    elif msg.subtype == "task_updated":
-        patch = msg.data.get("patch")
-        status = patch.get("status") if isinstance(patch, dict) else None
-        if status in TERMINAL_TASK_STATUSES:
-            inflight.discard(task_id)
 
 
 def render_scope(scope: tuple[ScopedComponent, ...] = TRIAGE_SCOPE) -> str:
@@ -734,30 +711,21 @@ async def run_frontend_triage(
             f"Triage bug {bug}.\n\nConsult the relevant rules in {rules_path}."
         )
 
-    result_msg: ResultMessage | None = None
     with Reporter(verbose=verbose, log_path=log) as reporter:
         reporter.header(f"bug {bug}")
         async with ClaudeSDKClient(options=options) as client:
             await client.query(user_prompt)
-            inflight: set[str] = set()
-            async for msg in client.receive_messages():
-                reporter.message(msg)
-                if isinstance(msg, SystemMessage):
-                    _track_task(msg, inflight)
-                if isinstance(msg, ResultMessage):
-                    result_msg = msg
-                    # A result frame ends one *turn*, not the run. The CLI
-                    # backgrounds a subagent spawn and answers the model with
-                    # "you will be notified when it completes"; a model that
-                    # takes that literally ends its turn to wait, and its
-                    # subagents' reports only arrive on a later turn. Stopping
-                    # at the first result (what `receive_response` does) drops
-                    # them, leaving a null plan and no recorded comment.
-                    if not inflight:
-                        break
+            # Not `receive_response`: it stops at the first ResultMessage, which
+            # the CLI emits while a backgrounded investigator/duplicate-hunter is
+            # still running, so their reports never arrive and the plan parses to
+            # all-null. `receive_settled_response` waits for the deferring tasks.
+            try:
+                result_msg = await receive_settled_response(
+                    client, on_message=reporter.message
+                )
+            except UnsettledResponseError as exc:
+                raise AgentError(f"bug {bug}: agent run did not settle: {exc}") from exc
 
-    if result_msg is None:
-        raise AgentError(f"bug {bug}: agent produced no result message")
     if result_msg.is_error:
         raise AgentError(
             f"bug {bug} triage failed: {result_msg.result or result_msg.subtype}"
