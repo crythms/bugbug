@@ -52,6 +52,15 @@ _MARKER = re.compile(
 
 _RESULT_OK = "  [tool←ok]"
 
+# Since #6860 the Reporter prefixes each record with "HH:MM:SS.mmm " and drops the
+# two-space indent on tool results. Undo both so older and newer logs parse alike.
+_STAMP_TOOL = re.compile(r"^\d\d:\d\d:\d\d\.\d{3} (?=\[tool←)", re.M)
+_STAMP = re.compile(r"^\d\d:\d\d:\d\d\.\d{3} ", re.M)
+
+
+def _unstamp(log_text: str) -> str:
+    return _STAMP.sub("", _STAMP_TOOL.sub("  ", log_text))
+
 
 @dataclass
 class ReplaySnapshot:
@@ -118,7 +127,7 @@ def _ingest(snapshot: ReplaySnapshot, payload: Any) -> None:
 
 def _blocks(log_text: str, is_header: Callable[[str], object]) -> Iterator[str]:
     """Body of each block whose header line matches, up to the next marker."""
-    lines = log_text.splitlines()
+    lines = _unstamp(log_text).splitlines()
     i = 0
     while i < len(lines):
         if not is_header(lines[i]):
@@ -153,7 +162,7 @@ _BASH_CALL = re.compile(r"^\[(agent|subagent)→tool\] Bash$")
 
 def parse_session_model(log_text: str) -> str | None:
     """The model the logged run used, which ``summary.json`` does not record."""
-    match = _SESSION_MODEL.search(log_text)
+    match = _SESSION_MODEL.search(_unstamp(log_text))
     return match.group(1) if match else None
 
 

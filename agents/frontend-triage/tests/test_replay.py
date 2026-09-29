@@ -23,6 +23,7 @@ from evals.replay import (
     get_bug_attachments,
     get_bug_comments,
     get_bugs,
+    parse_session_model,
     parse_transcript,
 )
 
@@ -134,6 +135,30 @@ def test_parse_captures_bug_data(snapshot):
     assert snapshot.fields[1999999]["resolution"] == "DUPLICATE"
     # The raw-text Read result and the [tool←ERROR] block create no bugs.
     assert set(snapshot.fields) == {2014702, 1999999}
+
+
+def _stamped(log: str) -> str:
+    """``log`` as the Reporter writes it since #6860: each record timestamped."""
+    lines = []
+    for line in log.splitlines():
+        if line.startswith("  [tool←"):
+            line = "12:34:56.789 " + line.lstrip()
+        elif line.startswith(("[", "---")):
+            line = "12:34:56.789 " + line
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def test_parses_timestamped_logs(snapshot):
+    stamped = _stamped(FIXTURE)
+    assert parse_transcript(stamped).to_dict() == snapshot.to_dict()
+    assert find_bmo_bash_commands(stamped) == find_bmo_bash_commands(FIXTURE)
+    assert (
+        parse_session_model(
+            "12:34:56.789 [system] session started (model=claude-opus-5)"
+        )
+        == "claude-opus-5"
+    )
 
 
 def test_snapshot_dict_round_trip(snapshot):
